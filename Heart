@@ -1,0 +1,186 @@
+import random
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.feature_selection import RFECV
+from imblearn.over_sampling import SMOTE
+from imblearn.under_sampling import ClusterCentroids
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, classification_report, confusion_matrix
+from sklearn.neural_network import MLPClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
+
+# AEHOM Class definition (for hyperparameter optimization)
+class AEHOM:
+    def __init__(self, num_clans, num_dimensions, lower_limit, upper_limit):
+        self.num_clans = num_clans
+        self.num_dimensions = num_dimensions
+        self.lower_limit = lower_limit
+        self.upper_limit = upper_limit
+
+    def initialize_population(self, population_size):
+        population = []
+        for _ in range(population_size):
+            clan_positions = []
+            for _ in range(self.num_clans):
+                clan_position = np.random.uniform(self.lower_limit, self.upper_limit, self.num_dimensions)
+                clan_positions.append(clan_position)
+            population.append(clan_positions)
+        return population
+
+    def evaluate_fitness(self, position):
+        return np.sum(position)  # You can modify this function to evaluate the neural network's performance
+
+    def update_position(self, current_position, optimal_solution, matriarch_impact):
+        updated_position = []
+        for clan_position, optimal_clan_solution in zip(current_position, optimal_solution):
+            updated_clan_position = optimal_clan_solution + matriarch_impact * (clan_position - optimal_clan_solution) + np.random.uniform() * (self.upper_limit - self.lower_limit)
+            updated_position.append(updated_clan_position)
+        return updated_position
+
+    def revise_position(self, current_position, matriarch_influence):
+        revised_position = []
+        for clan_position in current_position:
+            revised_clan_position = matriarch_influence * clan_position
+            revised_position.append(revised_position)
+        return revised_position
+
+    def conduct_exploratory_activities(self, current_position, min_search_limit, max_search_limit, k):
+        new_position = []
+        for clan_position in current_position:
+            new_clan_position = np.maximum(np.minimum(clan_position + k * (max_search_limit - min_search_limit) * np.random.uniform() * (2 * np.random.randint(0, 2, size=clan_position.shape) - 1), self.upper_limit), self.lower_limit)
+            new_position.append(new_clan_position)
+        return new_position
+
+    def crossover(self, parent1, parent2):
+        x1 = parent1[2]  # Assuming this is Px+1,En3 from Equation (25)
+        x2 = x1 + parent2[1]  # Assuming this is Px+1,En2 from Equation (26)
+        return x1, x2
+
+    def mutate(self, position, mutation_rate):
+        mutated_position = []
+        for clan_position in position:
+            if np.random.uniform() < mutation_rate:
+                mutation_index = np.random.randint(0, len(clan_position))
+                clan_position[mutation_index] = np.random.uniform(self.lower_limit, self.upper_limit)
+            mutated_position.append(clan_position)
+        return mutated_position
+
+    def select_parents(self, population):
+        fitness_scores = [self.evaluate_fitness(solution) for solution in population]
+        sorted_indices = np.argsort(fitness_scores)
+        parent_indices = sorted_indices[:len(population) // 2]
+        return [population[i] for i in parent_indices]
+
+    def optimize(self, population_size, max_iterations, mutation_rate, k, matriarch_impact, matriarch_influence, min_search_limit, max_search_limit, termination_condition):
+        population = self.initialize_population(population_size)
+        iteration = 0
+        best_solution = None
+        best_fitness = float('-inf')
+        while iteration < max_iterations:
+            fitness_scores = [self.evaluate_fitness(solution) for solution in population]
+            best_solution_index = np.argmax(fitness_scores)
+            best_fitness = fitness_scores[best_solution_index]
+            best_solution = population[best_solution_index]
+            print(f"Iteration {iteration}: Best Fitness = {best_fitness}, Best Solution = {best_solution}")
+
+            if termination_condition(best_fitness):
+                break
+
+            parents = self.select_parents(population)
+
+            offspring = []
+            for i in range(0, len(parents), 2):
+                parent1 = parents[i]
+                parent2 = parents[i+1]
+                offspring1, offspring2 = self.crossover(parent1, parent2)
+                offspring.append(self.mutate(offspring1, mutation_rate))
+                offspring.append(self.mutate(offspring2, mutation_rate))
+
+            population = offspring
+            iteration += 1
+
+        return best_solution, best_fitness
+
+# Load data
+df = pd.read_csv(r"D:\yr3_sem1\Seminar\heart.csv")
+
+# Data preprocessing
+print("Data Preview:")
+print(df.head())
+
+label_encoder = LabelEncoder()
+df['Sex'] = label_encoder.fit_transform(df['Sex'])
+df['ExerciseAngina'] = label_encoder.fit_transform(df['ExerciseAngina'])
+df = pd.get_dummies(df, columns=['ChestPainType', 'RestingECG', 'ST_Slope'], drop_first=True)
+
+X = df.drop(columns=['HeartDisease'])
+y = df['HeartDisease']
+
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# Train-test split
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+
+# Handle class imbalance using SMOTE
+smote = SMOTE()
+X_train_balanced, y_train_balanced = smote.fit_resample(X_train, y_train)
+
+# AEHOM optimization for hyperparameters
+num_clans = 5
+num_dimensions = 3  # Number of hyperparameters to optimize (e.g., hidden layers, learning rate, etc.)
+lower_limit = [50, 0.0001, 0]  # Lower limits for each hyperparameter
+upper_limit = [200, 0.1, 2]    # Upper limits for each hyperparameter
+
+aehom = AEHOM(num_clans, num_dimensions, lower_limit, upper_limit)
+
+# Perform optimization
+best_solution, best_fitness = aehom.optimize(population_size=50, max_iterations=100, mutation_rate=0.1,
+                                              k=0.1, matriarch_impact=0.5, matriarch_influence=0.5,
+                                              min_search_limit=-10, max_search_limit=10,
+                                              termination_condition=lambda fitness: fitness >= 0.95)
+
+# Extract optimized hyperparameters
+hidden_layer_sizes = int(best_solution[0][0])
+learning_rate = best_solution[0][1]
+activation_function_choice = int(best_solution[0][2])
+
+activation_functions = ['tanh', 'relu']
+activation_function = activation_functions[activation_function_choice]
+
+mlp = MLPClassifier(hidden_layer_sizes=(hidden_layer_sizes,), max_iter=1000,
+                    learning_rate_init=learning_rate, activation=activation_function,
+                    random_state=42)
+
+# Train MLP model
+mlp.fit(X_train_balanced, y_train_balanced)
+
+# Evaluate model
+y_pred = mlp.predict(X_test)
+accuracy = accuracy_score(y_test, y_pred)
+precision = precision_score(y_test, y_pred)
+recall = recall_score(y_test, y_pred)
+f1 = f1_score(y_test, y_pred)
+
+# Print evaluation metrics
+print("Evaluation Metrics (SMOTE Results):")
+print(f"Accuracy: {accuracy}")
+print(f"Precision: {precision}")
+print(f"Recall: {recall}")
+print(f"F1 Score: {f1}")
+
+# Classification report
+print("Classification Report (SMOTE Results):")
+print(classification_report(y_test, y_pred))
+
+# Confusion matrix (SMOTE Results)
+conf_matrix = confusion_matrix(y_test, y_pred)
+sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', xticklabels=['No Heart Disease', 'Heart Disease'], yticklabels=['No Heart Disease', 'Heart Disease'])
+plt.xlabel('Predicted')
+plt.ylabel('True')
+plt.title('Confusion Matrix (SMOTE Results)')
+plt.show()
